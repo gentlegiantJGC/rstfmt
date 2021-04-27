@@ -1,6 +1,8 @@
 import argparse
 import contextlib
 import sys
+import os
+import glob
 from typing import Any, ContextManager, TextIO, cast
 
 from . import debug, rst_extras, rstfmt
@@ -39,37 +41,46 @@ def main() -> None:
     misformatted = []
 
     for fn in args.files or [STDIN]:
-        cm = cast(ContextManager[TextIO], nullcontext(sys.stdin) if fn == STDIN else open(fn))
-
-        with cm as f:
-            inp = f.read()
-        doc = rstfmt.parse_string(inp)
-
-        if args.verbose:
-            print("=" * 60, fn, file=sys.stderr)
-            debug.dump_node(doc, sys.stderr)
-
-        if args.test:
-            try:
-                debug.run_test(doc)
-            except AssertionError as e:
-                raise AssertionError(f"Failed consistency test on {fn}!") from e
-            continue
-
-        output = rstfmt.format_node(args.width, doc)
-
-        if args.check:
-            if output != inp:
-                misformatted.append("Standard input" if fn == STDIN else fn)
-            continue
-
-        if fn != STDIN:
-            cm = open(fn, "w")
+        paths = []
+        if os.path.isfile(fn):
+            paths = [fn]
+        elif os.path.isdir(fn):
+            paths = glob.glob(os.path.join(fn, "**", "*.rst"), recursive=True)
         else:
-            cm = nullcontext(sys.stdout)
+            paths = glob.glob(fn)
 
-        with cm as f:
-            f.write(output)
+        for fn in paths:
+            cm = cast(ContextManager[TextIO], nullcontext(sys.stdin) if fn == STDIN else open(fn))
+
+            with cm as f:
+                inp = f.read()
+            doc = rstfmt.parse_string(inp)
+
+            if args.verbose:
+                print("=" * 60, fn, file=sys.stderr)
+                debug.dump_node(doc, sys.stderr)
+
+            if args.test:
+                try:
+                    debug.run_test(doc)
+                except AssertionError as e:
+                    raise AssertionError(f"Failed consistency test on {fn}!") from e
+                continue
+
+            output = rstfmt.format_node(args.width, doc)
+
+            if args.check:
+                if output != inp:
+                    misformatted.append("Standard input" if fn == STDIN else fn)
+                continue
+
+            if fn != STDIN:
+                cm = open(fn, "w")
+            else:
+                cm = nullcontext(sys.stdout)
+
+            with cm as f:
+                f.write(output)
 
     if misformatted:
         for fn in misformatted:
